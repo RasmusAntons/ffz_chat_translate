@@ -1,0 +1,14 @@
+{
+    "enabled": true,
+    "requires": [],
+
+    "version": "0.0.1",
+    "icon": "https://huggingface.co/front/assets/huggingface_logo-noborder.svg",
+
+    "short_name": "chat-translate",
+    "name": "Chat Translate",
+    "author": "owlbot",
+    "description": "Translate chat messages in real time using a local huggingface model.",
+
+    "website": "https://www.example.com"
+}
