@@ -53,7 +53,6 @@ class ChatTranslate extends Addon {
 		this.inject('metadata');
 		this.inject('chat');
 		this.inject('chat.actions');
-		this.inject('site.fine');
 		this.load_requires = ['metadata'];
 		this.supportedLangs = {...SUPPORTED_LANGS};
 		this.status = STATUS.disabled;
@@ -110,69 +109,68 @@ class ChatTranslate extends Addon {
 			}
 		});
 
+		const addon = this;
+
 		this.updateMessage = {
 			type: 'chat-translate',
-			priority: 10,
+			priority: -110,  // TODO: what priority makes sense here? This needs to run after all custom emotes are detected.
 			process(tokens, msg) {
-				if (msg.translation) {
-					return [{type: 'text', text: msg.translation}];
+				if (!msg.translationStatus)
+					addon.startTranslation(tokens, msg);
+				if (msg.translatedTokens) {
+					let i = 0;
+					for (let token of tokens) {
+						if (token.type === 'text') {
+							token.text = msg.translatedTokens[i++]||'';
+						}
+					}
 				}
 				return tokens;
 			}
 		}
 	}
 
-	async onLoad() {
-		this.chatLines = this.fine._wrappers.get('chat-line');
-	}
-
-	forceUpdateMessage(message) {
-		message.ffz_tokens = null;
-		message.ffz_reply = null;
-		message.highlights = message.mentioned = message.mention_color = message.color_priority = null;
-		let messageInstance = null;
-		for (const inst of this.chatLines.instances) {
-			if (inst.props.message.id === message.id) {
-				inst.forceUpdate();
-				break;
-			}
-		}
-
-	}
-
-	processMessage(event) {
-		this.log.info(event);
+	startTranslation(tokens, msg) {
 		if (!this.settings.get('chat_translate.enabled'))
-			return tokens;
-		// todo: filter out emotes
-		const originalContent = event.message.message
+			return;
+		msg.translationStatus = {info: 'translation started'};
+		const hasText = tokens.find(t => t.type === 'text' && t.text.match(/\S/)) !== undefined;
+		if (!hasText) {
+			msg.translationStatus = {info: 'not translated because it contains no text'};
+			return;
+		}
+		const queryText = tokens.map(t => (t.type === 'text') ? t.text : `<${t.type}>`).join(' ');
+
 		const detectEndpoint = new URL(`${this.settings.get('chat_translate.api_url')}/detect_probs`);
-		detectEndpoint.search = new URLSearchParams({text: originalContent, top: 50}).toString();
+		detectEndpoint.search = new URLSearchParams({text: queryText, top: 50}).toString();
 
 		fetch(detectEndpoint).then(res => res.json()).then(probabilities => {
 			this.status = STATUS.active;
 			for (let language of new Set([this.settings.get('chat_translate.preferred_language'), this.settings.get('chat_translate.second_language')])) {
 				const probability = probabilities.language.find(e => e[0] === language);
 				if (probability && probability[1] >= KNOWN_LANGUAGE_THRESHOLD) {
-					this.log.info(`not translating message because it is probably ${language}: ${originalContent}`);
+					msg.translationStatus.info = `not translated because it is probably ${language}`;
 					return;
 				}
 			}
 			const detectedLanguage = probabilities.language[0][0];
 			const translateEndpoint = new URL(`${this.settings.get('chat_translate.api_url')}/translate`);
 			translateEndpoint.search = new URLSearchParams({
-				text: originalContent,
+				text: queryText,
 				src_lang: detectedLanguage,
 				dst_lang: this.settings.get('chat_translate.preferred_language')
 			}).toString();
 			fetch(translateEndpoint).then(res => res.json()).then(result => {
 				if (result.detail) {
-					this.log.info(`failed to translate ${originalContent}: ${result.detail}`);
-					return
+					msg.translationStatus.info = 'translation failed (see console log for mor info)';
+					this.log.error(`failed to translate ${queryText}: ${result.detail}`);
+					return;
 				}
-				this.log.info(`translated ${originalContent} to ${result.translation}`)
-				event.message.translation = result.translation;
-				this.forceUpdateMessage(event.message);
+				this.log.info(`translated ${queryText} to ${result.translation}`)
+				msg.translationStatus.info = `translated from ${detectedLanguage}, original message: ${msg.message}`
+				msg.translatedTokens = result.translation.split(/<[a-z]+>/g);
+				msg.ffz_tokens = null;
+				this.emit('chat:update-line', msg.id);
 			});
 		}).catch(e => {
 			this.status = STATUS.error;
@@ -182,14 +180,12 @@ class ChatTranslate extends Addon {
 	onEnable() {
 		this.metadata.define('chat-translation-status', {
 			order: 0,
-			icon: 'ffz-i-language',
+			icon: "ffz-i-language",
 			color: data => this.status.color,
 			tooltip: data => `Chat translation ${this.status.label}`,
 			label: data => 'T'
 		});
 		this.chat.addTokenizer(this.updateMessage);
-		this.on('chat:receive-message', this.processMessage);
-
 
 		this.actions.addAction('chat-translation-info', {
 			presets: [{
@@ -201,7 +197,12 @@ class ChatTranslate extends Addon {
 			required_context: ['message'],
 			title: 'Chat Translation',
 			tooltip(data) {
-				return data.message.text;
+				// TODO: find a better way to access the original message object or store the translation info somewhere else?
+				const allMessages = [];
+				this.emit('chat:get-messages', true, false, false, allMessages);
+				const originalMessage = allMessages.find(o => data.message.id === o.message.id)?.message;
+				console.log(data.message, originalMessage);
+				return originalMessage?.translationStatus?.info;
 			}
 		});
 

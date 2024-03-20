@@ -8,10 +8,9 @@ This is still work in progress and primarily an experiment, I don't know yet if 
 
 ## TODOs
 
-* Improve translations: The translations are currently not as good as google translate, sometimes it just makes up stuff
-* Improve emote handling
+* Improve translations: Sometimes the model returns unreasonably long results
 * Allow setting multiple known languages (currently only 1)
-* Add ROCm support: This should be free using transformerrs, I just cannot test it currently
+* Add ROCm support: This should be free using transformers, I just cannot test it currently
 * Generally improve the UI
 
 
