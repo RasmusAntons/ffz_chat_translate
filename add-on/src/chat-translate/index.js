@@ -1,50 +1,54 @@
 SUPPORTED_LANGS = {
-	'ar-SA': 'Arabic',
-	'de-DE': 'German',
-	'en-US': 'English',
-	'es-ES': 'Spanish',
-	'fi-FI': 'Finnish',
-	'fr-FR': 'French',
-	'hi-IN': 'Hindi',
-	'it-IT': 'Italian',
-	'ja-JP': 'Japanese',
-	'ko-KR': 'Korean',
-	'lv-LV': 'Latvian',
-	'my-MM': 'Burmese',
-	'nl-NL': 'Dutch',
-	'ro-RO': 'Romanian',
-	'ru-RU': 'Russian',
-	'tr-TR': 'Turkish',
-	'vi-VN': 'Vietnamese',
-	'zh-CN': 'Chinese',
-	'af-ZA': 'Afrikaans',
-	'az-AZ': 'Azerbaijani',
-	'bn-BD': 'Bengali',
-	'fa-IR': 'Farsi',
-	'he-IL': 'Hebrew',
-	'id-ID': 'Indonesian',
-	'ka-GE': 'Georgian',
-	'km-KH': 'Khmer',
-	'ml-IN': 'Malayalam',
-	'mn-MN': 'Mongolian',
-	'pl-PL': 'Polish',
-	'pt-PT': 'Portuguese',
-	'sv-SE': 'Swedish',
-	'sw-KE': 'Swahili',
-	'ta-IN': 'Tamil',
-	'te-IN': 'Telugu',
-	'th-TH': 'Thai',
-	'tl-PH': 'Tagalog',
-	'uk_UA': 'Ukrainian',
-	'ur-PK': 'Urdu',
-	'sl-SL': 'Slovenian'
+	'en': 'English',
+	'sq': 'Albanian',
+	'ar': 'Arabic',
+	'az': 'Azerbaijani',
+	'bn': 'Bengali',
+	'bg': 'Bulgarian',
+	'ca': 'Catalan',
+	'zh': 'Chinese',
+	'zt': 'Chinese (traditional)',
+	'cs': 'Czech',
+	'da': 'Danish',
+	'nl': 'Dutch',
+	'eo': 'Esperanto',
+	'et': 'Estonian',
+	'fi': 'Finnish',
+	'fr': 'French',
+	'de': 'German',
+	'el': 'Greek',
+	'he': 'Hebrew',
+	'hi': 'Hindi',
+	'hu': 'Hungarian',
+	'id': 'Indonesian',
+	'ga': 'Irish',
+	'it': 'Italian',
+	'ja': 'Japanese',
+	'ko': 'Korean',
+	'lv': 'Latvian',
+	'lt': 'Lithuanian',
+	'ms': 'Malay',
+	'nb': 'Norwegian',
+	'fa': 'Persian',
+	'pl': 'Polish',
+	'pt': 'Portuguese',
+	'ro': 'Romanian',
+	'ru': 'Russian',
+	'sk': 'Slovak',
+	'sl': 'Slovenian',
+	'es': 'Spanish',
+	'sv': 'Swedish',
+	'tl': 'Tagalog',
+	'th': 'Thai',
+	'tr': 'Turkish',
+	'uk': 'Ukrainian',
+	'ur': 'Urdu'
 }
 STATUS = {
 	disabled: {label: 'disabled', color: 'gray'},
 	active: {label: 'active', color: ''},
 	error: {label: 'error', color: 'red'}
 }
-KNOWN_LANGUAGE_THRESHOLD = 0.1;
 
 
 class ChatTranslate extends Addon {
@@ -100,7 +104,7 @@ class ChatTranslate extends Addon {
 		});
 
 		this.settings.add('chat_translate.api_url', {
-			default: 'http://localhost:8000',
+			default: 'http://localhost:5000',
 			ui: {
 				path: 'Chat > Translate >> API',
 				sort: 100,
@@ -139,36 +143,40 @@ class ChatTranslate extends Addon {
 			msg.translationStatus = {info: 'not translated because it contains no text'};
 			return;
 		}
-		const queryText = tokens.map(t => (t.type === 'text') ? t.text : `<${t.type}>`).join(' ');
+		const queryText = tokens.map(t => (t.type === 'text') ? t.text : `<p class="${t.type}"></p>`).join(' ');
 
-		const detectEndpoint = new URL(`${this.settings.get('chat_translate.api_url')}/detect_probs`);
-		detectEndpoint.search = new URLSearchParams({text: queryText, top: 50}).toString();
+		const detectEndpoint = new URL(`${this.settings.get('chat_translate.api_url')}/detect`);
+		const detectQuery = JSON.stringify({q: queryText});
 
-		fetch(detectEndpoint).then(res => res.json()).then(probabilities => {
+		this.log.info(`fetching ${detectEndpoint}`)
+
+		fetch(detectEndpoint, {headers: {'Content-Type': 'application/json'}, method: 'POST', body: detectQuery})
+				.then(res => res.json()).then(probabilities => {
 			this.status = STATUS.active;
-			for (let language of new Set([this.settings.get('chat_translate.preferred_language'), this.settings.get('chat_translate.second_language')])) {
-				const probability = probabilities.language.find(e => e[0] === language);
-				if (probability && probability[1] >= KNOWN_LANGUAGE_THRESHOLD) {
-					msg.translationStatus.info = `not translated because it is probably ${language}`;
-					return;
-				}
+			const detectedLanguage = probabilities[0].language;
+			const knownLanguages = new Set([this.settings.get('chat_translate.preferred_language'), this.settings.get('chat_translate.second_language')]);
+			if (knownLanguages.has(detectedLanguage)) {
+				msg.translationStatus.info = `not translated because it is probably ${SUPPORTED_LANGS[detectedLanguage]}`;
+				return;
 			}
-			const detectedLanguage = probabilities.language[0][0];
 			const translateEndpoint = new URL(`${this.settings.get('chat_translate.api_url')}/translate`);
-			translateEndpoint.search = new URLSearchParams({
-				text: queryText,
-				src_lang: detectedLanguage,
-				dst_lang: this.settings.get('chat_translate.preferred_language')
-			}).toString();
-			fetch(translateEndpoint).then(res => res.json()).then(result => {
-				if (result.detail) {
-					msg.translationStatus.info = 'translation failed (see console log for mor info)';
-					this.log.error(`failed to translate ${queryText}: ${result.detail}`);
+			const translateQuery = JSON.stringify({
+				q: queryText,
+				source: detectedLanguage,
+				target: this.settings.get('chat_translate.preferred_language'),
+				format: 'html'
+			});
+			fetch(translateEndpoint, {headers: {'Content-Type': 'application/json'}, method: 'POST', body: translateQuery})
+					.then(res => res.json()).then(result => {
+				if (result.error) {
+					msg.translationStatus.info = `translation failed (${result.error})`;
+					this.log.error(`failed to translate ${queryText}: ${result.error}`);
 					return;
 				}
-				this.log.info(`translated ${queryText} to ${result.translation}`)
-				msg.translationStatus.info = `translated from ${detectedLanguage}, original message: ${msg.message}`
-				msg.translatedTokens = result.translation.split(/<[a-z]+>/g);
+				this.log.info(`translated ${queryText} to ${result.translatedText}`)
+				msg.translationStatus.info = `translated from ${SUPPORTED_LANGS[detectedLanguage]}, original message: ${msg.message}`
+				this.log.info('translatedText', result.translatedText)
+				msg.translatedTokens = result.translatedText.split(/<p class="[a-z]+"><\/p>/g);
 				msg.ffz_tokens = null;
 				this.emit('chat:update-line', msg.id);
 			});
@@ -201,7 +209,6 @@ class ChatTranslate extends Addon {
 				const allMessages = [];
 				this.emit('chat:get-messages', true, false, false, allMessages);
 				const originalMessage = allMessages.find(o => data.message.id === o.message.id)?.message;
-				console.log(data.message, originalMessage);
 				return originalMessage?.translationStatus?.info;
 			}
 		});
